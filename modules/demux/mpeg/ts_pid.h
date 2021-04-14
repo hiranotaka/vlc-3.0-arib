@@ -35,6 +35,10 @@ typedef enum
     TYPE_STREAM,
     TYPE_SI,
     TYPE_PSIP,
+#ifdef HAVE_ARIB
+    TYPE_EMM,
+    TYPE_ECM,
+#endif
 } ts_pid_type_t;
 
 enum
@@ -69,6 +73,11 @@ struct ts_pid_t
         ts_stream_t    *p_stream;
         ts_si_t     *p_si;
         ts_psip_t   *p_psip;
+#ifdef HAVE_ARIB
+        ts_cat_t    *p_cat;
+        ts_emm_t    *p_emm;
+        ts_ecm_t    *p_ecm;
+#endif
     } u;
 
     struct

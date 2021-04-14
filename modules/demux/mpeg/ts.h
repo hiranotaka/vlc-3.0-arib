@@ -20,6 +20,10 @@
 #ifndef VLC_TS_H
 #define VLC_TS_H
 
+#ifdef HAVE_ARIB
+# include "../arib/b_cas_card.h"
+#endif
+
 #ifdef HAVE_ARIBB24
     typedef struct arib_instance_t arib_instance_t;
 #endif
@@ -28,6 +32,9 @@ typedef struct csa_t csa_t;
 #define TS_USER_PMT_NUMBER (0)
 
 #define TS_PSI_PAT_PID 0x00
+#ifdef HAVE_ARIB
+#define TS_PSI_CAT_PID 0x01
+#endif
 
 typedef enum ts_standards_e
 {
@@ -130,6 +137,11 @@ struct demux_sys_t
 
     /* */
     bool        b_start_record;
+
+#ifdef HAVE_ARIB
+    B_CAS_CARD  *arib_card;
+    int         i_pid_emm;
+#endif
 };
 
 void TsChangeStandard( demux_sys_t *, ts_standards_e );

@@ -30,6 +30,9 @@ typedef enum
 } ts_pmt_registration_type_t;
 
 bool ts_psi_PAT_Attach( ts_pid_t *, void * );
+#ifdef HAVE_ARIB
+bool ts_psi_CAT_Attach( ts_pid_t *, void * );
+#endif
 void ts_psi_Packet_Push( ts_pid_t *, const uint8_t * );
 
 int UserPmt( demux_t *p_demux, const char * );

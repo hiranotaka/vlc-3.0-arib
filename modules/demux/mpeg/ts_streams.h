@@ -25,6 +25,11 @@ typedef struct ts_pmt_t ts_pmt_t;
 typedef struct ts_stream_t ts_stream_t;
 typedef struct ts_si_t  ts_si_t;
 typedef struct ts_psip_t ts_psip_t;
+#ifdef HAVE_ARIB
+typedef struct ts_cat_t ts_cat_t;
+typedef struct ts_emm_t ts_emm_t;
+typedef struct ts_ecm_t ts_ecm_t;
+#endif
 
 typedef struct ts_stream_processor_t ts_stream_processor_t;
 struct ts_stream_processor_t
@@ -74,5 +79,16 @@ void ts_si_Del( demux_t *, ts_si_t * );
 
 ts_psip_t *ts_psip_New( demux_t * );
 void ts_psip_Del( demux_t *, ts_psip_t * );
+
+#ifdef HAVE_ARIB
+ts_cat_t *ts_cat_New( demux_t * );
+void ts_cat_Del( demux_t *, ts_cat_t * );
+
+ts_emm_t *ts_emm_New( demux_t * );
+void ts_emm_Del( demux_t *, ts_emm_t * );
+
+ts_ecm_t *ts_ecm_New( demux_t * );
+void ts_ecm_Del( demux_t *, ts_ecm_t * );
+#endif
 
 #endif
