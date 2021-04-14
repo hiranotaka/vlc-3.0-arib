@@ -547,11 +547,13 @@ static void EITCallBack( demux_t *p_demux, dvbpsi_eit_t *p_eit )
         if( !p_epgevt )
             continue;
 
+#ifndef HAVE_ARIB
         if( !vlc_epg_AddEvent( p_epg, p_epgevt ) )
         {
             vlc_epg_event_Delete( p_epgevt );
             continue;
         }
+#endif
 
         for( p_dr = p_evt->p_first_descriptor; p_dr; p_dr = p_dr->p_next )
         {
@@ -649,6 +651,14 @@ static void EITCallBack( demux_t *p_demux, dvbpsi_eit_t *p_eit )
                 break;
             }
         }
+
+#ifdef HAVE_ARIB
+        if( !p_epgevt->psz_name || !vlc_epg_AddEvent( p_epg, p_epgevt ) )
+        {
+            vlc_epg_event_Delete( p_epgevt );
+            continue;
+        }
+#endif
 
         switch ( p_evt->i_running_status )
         {

@@ -3033,6 +3033,23 @@ dnl
 PKG_ENABLE_MODULES_VLC([ARIBB25], [aribcam], [aribb25 >= 0.2.6], [ARIB STD-B25], [auto])
 
 dnl
+dnl  ARIB support
+dnl
+AC_ARG_ENABLE(arib,
+  [  --enable-arib           ARIB support (default disabled)])
+have_arib=no
+if test "${enable_arib}" = "yes"
+then
+  PKG_CHECK_MODULES(PCSC, libpcsclite, [
+  ], [
+    AC_MSG_ERROR([${PCSC_PKG_ERRORS}.])
+  ])
+  AC_DEFINE(HAVE_ARIB, 1, [Define if you want ARIB support])
+  have_arib=yes
+fi
+AM_CONDITIONAL(HAVE_ARIB, [ test "${have_arib}" = "yes" ])
+
+dnl
 dnl  kate decoder plugin
 dnl
 PKG_ENABLE_MODULES_VLC([KATE], [], [kate >= 0.3.0], [kate codec], [auto])

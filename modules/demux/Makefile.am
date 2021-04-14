@@ -279,6 +279,11 @@ if HAVE_ARIBB24
 libts_plugin_la_CFLAGS += $(ARIBB24_CFLAGS)
 libts_plugin_la_LIBADD += $(ARIBB24_LIBS)
 endif
+if HAVE_ARIB
+libts_plugin_la_SOURCES += demux/arib/b_cas_card.c demux/arib/multi2.c
+libts_plugin_la_CFLAGS += $(PCSC_CFLAGS)
+libts_plugin_la_LIBADD += $(PCSC_LIBS)
+endif
 if HAVE_DVBPSI
 demux_LTLIBRARIES += libts_plugin.la
 endif

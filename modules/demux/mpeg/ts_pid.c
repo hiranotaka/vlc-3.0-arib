@@ -189,7 +189,15 @@ bool PIDSetup( demux_t *p_demux, ts_pid_type_t i_type, ts_pid_t *pid, ts_pid_t *
             return true;
 
         case TYPE_CAT:
+#ifdef HAVE_ARIB
+            PIDReset( pid );
+            pid->u.p_cat = ts_cat_New( p_demux );
+            if( !pid->u.p_cat )
+                return false;
+            break;
+#else
             return true;
+#endif
 
         case TYPE_PAT:
             PIDReset( pid );
@@ -225,6 +233,22 @@ bool PIDSetup( demux_t *p_demux, ts_pid_type_t i_type, ts_pid_t *pid, ts_pid_t *
             if( !pid->u.p_psip )
                 return false;
             break;
+
+#ifdef HAVE_ARIB
+        case TYPE_EMM:
+            PIDReset( pid );
+            pid->u.p_emm = ts_emm_New( p_demux );
+            if( !pid->u.p_emm )
+                return false;
+            break;
+
+        case TYPE_ECM:
+            PIDReset( pid );
+            pid->u.p_ecm = ts_ecm_New( p_demux );
+            if( !pid->u.p_ecm )
+                return false;
+            break;
+#endif
 
         default:
             assert(false);
@@ -275,6 +299,10 @@ void PIDRelease( demux_t *p_demux, ts_pid_t *pid )
             break;
 
         case TYPE_CAT:
+#ifdef HAVE_ARIB
+            ts_cat_Del( p_demux, pid->u.p_cat );
+            pid->u.p_cat = NULL;
+#endif
             break;
 
         case TYPE_PAT:
@@ -301,6 +329,18 @@ void PIDRelease( demux_t *p_demux, ts_pid_t *pid )
             ts_psip_Del( p_demux, pid->u.p_psip );
             pid->u.p_psip = NULL;
             break;
+
+#ifdef HAVE_ARIB
+        case TYPE_EMM:
+            ts_emm_Del( p_demux, pid->u.p_emm );
+            pid->u.p_emm = NULL;
+            break;
+
+        case TYPE_ECM:
+            ts_ecm_Del( p_demux, pid->u.p_ecm );
+            pid->u.p_ecm = NULL;
+            break;
+#endif
         }
 
         SetPIDFilter( p_demux->p_sys, pid, false );
