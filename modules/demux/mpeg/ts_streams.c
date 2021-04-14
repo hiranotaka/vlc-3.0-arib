@@ -142,6 +142,10 @@ ts_pmt_t *ts_pmt_New( demux_t *p_demux )
     pmt->arib.i_download_id = -1;
     pmt->arib.i_logo_id = -1;
 
+#ifdef HAVE_ARIB
+    pmt->p_ecm = NULL;
+#endif
+
     return pmt;
 }
 
@@ -394,3 +398,95 @@ ts_psip_t *ts_psip_New( demux_t *p_demux )
 
     return psip;
 }
+
+#ifdef HAVE_ARIB
+ts_cat_t *ts_cat_New( demux_t *p_demux )
+{
+    ts_cat_t *cat = malloc( sizeof( ts_cat_t ) );
+    if( !cat )
+        return NULL;
+
+    if( !handle_Init( p_demux, &cat->handle ) )
+    {
+        free( cat );
+        return NULL;
+    }
+
+    cat->i_version = -1;
+    cat->p_emm = NULL;
+
+    return cat;
+}
+
+void ts_cat_Del( demux_t *p_demux, ts_cat_t *cat )
+{
+    VLC_UNUSED(p_demux);
+    if( dvbpsi_decoder_present( cat->handle ) )
+        dvbpsi_pat_detach( cat->handle );
+    dvbpsi_delete( cat->handle );
+    free( cat );
+}
+
+ts_emm_t *ts_emm_New( demux_t *p_demux )
+{
+    ts_emm_t *emm = malloc( sizeof( ts_emm_t ) );
+    if( !emm )
+        return NULL;
+
+    if( !handle_Init( p_demux, &emm->handle ) )
+    {
+        free( emm );
+        return NULL;
+    }
+
+    emm->i_version = -1;
+
+    return emm;
+}
+
+void ts_emm_Del( demux_t *p_demux, ts_emm_t *emm )
+{
+    VLC_UNUSED(p_demux);
+    if( dvbpsi_decoder_present( emm->handle ) )
+    {
+       dvbpsi_decoder_delete( emm->handle->p_decoder );
+       emm->handle->p_decoder = NULL;
+    }
+    dvbpsi_delete( emm->handle );
+    free( emm );
+}
+
+ts_ecm_t *ts_ecm_New( demux_t *p_demux )
+{
+    ts_ecm_t *ecm = malloc( sizeof( ts_ecm_t ) );
+    if( !ecm )
+        return NULL;
+
+    if( !handle_Init( p_demux, &ecm->handle ) )
+    {
+        free( ecm );
+        return NULL;
+    }
+
+    ecm->i_version = -1;
+    ecm->arib_descrambler = NULL;
+
+    return ecm;
+}
+
+void ts_ecm_Del( demux_t *p_demux, ts_ecm_t *ecm )
+{
+    VLC_UNUSED(p_demux);
+    if( dvbpsi_decoder_present( ecm->handle ) )
+    {
+       dvbpsi_decoder_delete( ecm->handle->p_decoder );
+       ecm->handle->p_decoder = NULL;
+    }
+    dvbpsi_delete( ecm->handle );
+    if( ecm->arib_descrambler )
+    {
+        ecm->arib_descrambler->release( ecm->arib_descrambler );
+    }
+    free( ecm );
+}
+#endif

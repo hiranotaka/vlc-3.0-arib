@@ -369,6 +369,9 @@ static int Open( vlc_object_t *p_this )
     unsigned     i_packet_header_size = 0;
 
     ts_pid_t    *patpid;
+#ifdef HAVE_ARIB
+    ts_pid_t    *catpid = NULL;
+#endif
     vdr_info_t   vdr = {0};
 
     /* Search first sync byte */
@@ -413,6 +416,11 @@ static int Open( vlc_object_t *p_this )
     p_sys->patfix.i_timesourcepid = 0;
     p_sys->patfix.status = var_CreateGetBool( p_demux, "ts-patfix" ) ? PAT_WAITING : PAT_FIXTRIED;
 
+#ifdef HAVE_ARIB
+    p_sys->arib_card = NULL;
+    p_sys->i_pid_emm = -1;
+#endif
+
     /* Init PAT handler */
     patpid = GetPID(p_sys, 0);
     if ( !PIDSetup( p_demux, TYPE_PAT, patpid, NULL ) )
@@ -428,6 +436,32 @@ static int Open( vlc_object_t *p_this )
         free( p_sys );
         return VLC_EGENERIC;
     }
+
+#ifdef HAVE_ARIB
+    p_sys->arib_card = create_b_cas_card();
+    if( p_sys->arib_card )
+    {
+        if( p_sys->arib_card->init( p_sys->arib_card ) < 0 )
+        {
+            p_sys->arib_card->release( p_sys->arib_card );
+            p_sys->arib_card = NULL;
+        }
+    }
+
+    if( p_sys->arib_card ) {
+        msg_Info( p_demux, "ARIB card detected" );
+        catpid = GetPID(p_sys, 1);
+        if( !PIDSetup( p_demux, TYPE_CAT, catpid, NULL ))
+        {
+            catpid = NULL;
+        }
+    }
+
+    if( catpid )
+    {
+        ts_psi_CAT_Attach( catpid, p_demux );
+    }
+#endif
 
     p_sys->b_access_control = true;
     p_sys->b_access_control = ( VLC_SUCCESS == SetPIDFilter( p_sys, patpid, true ) );
@@ -592,6 +626,11 @@ static void Close( vlc_object_t *p_this )
     /* Clear up attachments */
     vlc_dictionary_clear( &p_sys->attachments, FreeDictAttachment, NULL );
 
+#ifdef HAVE_ARIB
+    if( p_sys->arib_card )
+        p_sys->arib_card->release( p_sys->arib_card );
+#endif
+
     free( p_sys );
 }
 
@@ -708,6 +747,11 @@ static int Demux( demux_t *p_demux )
         {
         case TYPE_PAT:
         case TYPE_PMT:
+#ifdef HAVE_ARIB
+        case TYPE_CAT:
+        case TYPE_EMM:
+        case TYPE_ECM:
+#endif
             /* PAT and PMT are not allowed to be scrambled */
             ts_psi_Packet_Push( p_pid, p_pkt->p_buffer );
             block_Release( p_pkt );
@@ -758,7 +802,9 @@ static int Demux( demux_t *p_demux )
             block_Release( p_pkt );
             break;
 
+#ifndef HAVE_ARIB
         case TYPE_CAT:
+#endif
         default:
             /* We have to handle PCR if present */
             block_Release( p_pkt );
@@ -2642,6 +2688,9 @@ static bool GatherPESData( demux_t *p_demux, ts_pid_t *pid, block_t *p_pkt, size
     ts_stream_t *p_pes = pid->u.p_stream;
     const ts_es_t *p_es = p_pes->p_es;
     int64_t i_append_pcr = ( p_es && p_es->p_program ) ? p_es->p_program->pcr.i_current : -1;
+#ifdef HAVE_ARIB
+    const uint8_t *p = p_pkt->p_buffer;
+#endif
 
     /* We have to gather it */
     p_pkt->p_buffer += i_skip;
@@ -2658,6 +2707,18 @@ static bool GatherPESData( demux_t *p_demux, ts_pid_t *pid, block_t *p_pkt, size
         b_single_payload = false;
 
     }
+
+#ifdef HAVE_ARIB
+    ts_pid_t *ecmpid = pid->u.p_stream->p_es->p_program->p_ecm;
+    if ( ecmpid && p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED )
+    {
+        MULTI2 *descrambler = ecmpid->u.p_ecm->arib_descrambler;
+        descrambler->decrypt(descrambler, (p[3] >> 6) & 0x03,
+                             p_pkt->p_buffer,
+                             p_pkt->i_buffer);
+        p_pkt->i_flags &= ~BLOCK_FLAG_SCRAMBLED;
+    }
+#endif
 
     /* We'll cannot parse any pes data */
     if( (p_pkt->i_flags & BLOCK_FLAG_SCRAMBLED) && p_demux->p_sys->b_valid_scrambling )

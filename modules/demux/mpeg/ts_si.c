@@ -530,7 +530,7 @@ static void EITCallBack( demux_t *p_demux, dvbpsi_eit_t *p_eit )
         if( p_sys->standard == TS_STANDARD_ARIB )
         {
             /* See comments on TDT callback */
-            i_start += 9 * 3600;
+            i_start -= 9 * 3600;
         }
 
         msg_Dbg( p_demux, "  * event id=%"PRIu16" start_time:%"PRId64" duration=%d "

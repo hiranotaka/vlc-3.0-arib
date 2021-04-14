@@ -31,6 +31,11 @@
 #include <dvbpsi/pmt.h>
 #include <dvbpsi/dr.h>
 
+#ifdef HAVE_ARIB
+# include <dvbpsi/psi.h>
+# include <dvbpsi/cat.h>
+#endif
+
 #include <vlc_demux.h>
 #include <vlc_bits.h>
 
@@ -62,6 +67,22 @@
 static void PIDFillFormat( demux_t *, ts_stream_t *p_pes, int i_stream_type, ts_transport_type_t * );
 static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt );
 static ts_standards_e ProbePMTStandard( const dvbpsi_pmt_t *p_dvbpsipmt );
+
+#ifdef HAVE_ARIB
+typedef struct {
+    dvbpsi_decoder_t dvbpsi_decoder;
+    demux_sys_t *p_sys;
+    ts_pid_t *p_pid;
+} ts_decoder_t;
+
+static int AttachEMM( demux_t *, ts_pid_t *, int );
+static void DetachEMM( demux_t *, ts_pid_t * );
+static void EMMCallBack( dvbpsi_t *, dvbpsi_psi_section_t * );
+
+static int AttachECM( demux_t *, ts_pid_t *, int );
+static void DetachECM( demux_t *, ts_pid_t * );
+static void ECMCallBack( dvbpsi_t *, dvbpsi_psi_section_t * );
+#endif
 
 static int PATCheck( demux_t *p_demux, dvbpsi_pat_t *p_pat )
 {
@@ -1666,6 +1687,10 @@ static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
     ts_pid_t     *pmtpid = NULL;
     ts_pmt_t     *p_pmt = NULL;
 
+#ifdef HAVE_ARIB
+    int           i_pid_ecm = -1;
+#endif
+
     msg_Dbg( p_demux, "PMTCallBack called for program %d", p_dvbpsipmt->i_program_number );
 
     if (unlikely(GetPID(p_sys, 0)->type != TYPE_PAT))
@@ -1912,6 +1937,25 @@ static void PMTCallBack( void *data, dvbpsi_pmt_t *p_dvbpsipmt )
         if( b_create_es )
             AddAndCreateES( p_demux, pespid, false );
     }
+
+#ifdef HAVE_ARIB
+    for( dvbpsi_descriptor_t *p_dr = p_dvbpsipmt->p_first_descriptor;
+         p_dr != NULL; p_dr = p_dr->p_next )
+    {
+        if( p_dr->i_tag == 0x9 )
+        {
+            uint16_t i_sysid = ((uint16_t)p_dr->p_data[0] << 8)
+                                | p_dr->p_data[1];
+            if( i_sysid == 0x5 && p_sys->arib_card )
+            {
+                i_pid_ecm = (((int)p_dr->p_data[2] << 8) & 0x1f00)
+                             | p_dr->p_data[3];
+            }
+        }
+    }
+    DetachECM( p_demux, pmtpid );
+    AttachECM( p_demux, pmtpid, i_pid_ecm );
+#endif
 
     /* Set CAM descrambling */
     if( ProgramIsSelected( p_sys, p_pmt->i_number ) )
@@ -2161,6 +2205,257 @@ error:
     return VLC_EGENERIC;
 }
 
+#ifdef HAVE_ARIB
+void CATCallBack( void *data, dvbpsi_cat_t *p_dvbpsicat )
+{
+    demux_t              *p_demux = data;
+    demux_sys_t          *p_sys = p_demux->p_sys;
+    ts_pid_t             *catpid = GetPID(p_sys, 1);
+    ts_cat_t             *p_cat = GetPID(p_sys, 1)->u.p_cat;
+    dvbpsi_descriptor_t  *p_dr;
+    int                  i_pid_emm = -1;
+
+    msg_Dbg( p_demux, "CATCallBack called" );
+
+    if( ( p_cat->i_version != -1 &&
+            ( !p_dvbpsicat->b_current_next ||
+              p_dvbpsicat->i_version == p_cat->i_version ) ) )
+    {
+        dvbpsi_cat_delete( p_dvbpsicat );
+        return;
+    }
+
+    msg_Dbg( p_demux, "new CAT version=%d current_next=%d",
+             p_dvbpsicat->i_version, p_dvbpsicat->b_current_next );
+
+    for( p_dr = p_dvbpsicat->p_first_descriptor; p_dr != NULL;
+         p_dr = p_dr->p_next )
+    {
+        if( p_dr->i_tag == 0x9 )
+        {
+            uint16_t i_sysid = ((uint16_t)p_dr->p_data[0] << 8)
+                                | p_dr->p_data[1];
+            msg_Dbg( p_demux, "  * descriptor : CA (0x9) SysID 0x%x", i_sysid );
+            if( i_sysid == 0x5 && p_sys->arib_card )
+            {
+                i_pid_emm = (((int)p_dr->p_data[2] << 8) & 0x1f00)
+                             | p_dr->p_data[3];
+            }
+        }
+        else
+        {
+            msg_Dbg( p_demux, "  * dr->i_tag=0x%x", p_dr->i_tag );
+        }
+    }
+
+    DetachEMM( p_demux, catpid );
+    AttachEMM( p_demux, catpid, i_pid_emm );
+
+    p_cat->i_version = p_dvbpsicat->i_version;
+
+    dvbpsi_cat_delete( p_dvbpsicat );
+}
+
+static int AttachEMM( demux_t *p_demux, ts_pid_t *catpid, int i_pid )
+{
+    demux_sys_t *p_sys;
+    ts_decoder_t *p_decoder;
+    ts_pid_t *emmpid;
+
+    if ( i_pid < 0 )
+        return 0;
+
+    p_sys = p_demux->p_sys;
+    emmpid = GetPID( p_sys, i_pid );
+    if ( !emmpid )
+        return 0;
+
+    p_decoder = (ts_decoder_t *) dvbpsi_decoder_new( EMMCallBack, 1024, true,
+                                                     sizeof(ts_decoder_t) );
+    if( !p_decoder )
+    {
+        return 0;
+    }
+    p_decoder->p_sys = p_sys;
+    p_decoder->p_pid = emmpid;
+
+    if ( PIDSetup( p_demux, TYPE_EMM, emmpid, catpid ) ) {
+        dvbpsi_decoder_delete( &p_decoder->dvbpsi_decoder );
+        return 0;
+    }
+
+    emmpid->u.p_emm->handle->p_decoder = &p_decoder->dvbpsi_decoder;
+
+    catpid->u.p_cat->p_emm = emmpid;
+
+    SetPIDFilter( p_demux->p_sys, emmpid, true );
+    return 1;
+}
+
+static void DetachEMM( demux_t *p_demux, ts_pid_t *catpid )
+{
+    ts_pid_t *emmpid;
+
+    emmpid = catpid->u.p_cat->p_emm;
+    if ( !emmpid )
+        return;
+
+    SetPIDFilter( p_demux->p_sys, emmpid, false );
+
+    PIDRelease( p_demux, emmpid );
+
+    catpid->u.p_cat->p_emm = NULL;
+}
+
+static void EMMCallBack( dvbpsi_t *handle, dvbpsi_psi_section_t *p_section )
+{
+    if( !p_section->b_syntax_indicator )
+        goto out;
+
+    ts_decoder_t *p_decoder = (ts_decoder_t *)handle->p_decoder;
+    ts_pid_t *emmpid = p_decoder->p_pid;
+    if ( emmpid->type != TYPE_EMM )
+        goto out;
+
+    if ( !p_section->b_current_next )
+        goto out;
+
+    if( emmpid->u.p_emm->i_version != -1 &&
+        ( !p_section->b_current_next ||
+          p_section->i_version == emmpid->u.p_emm->i_version ) )
+        goto out;
+
+    emmpid->u.p_emm->i_version = p_section->i_version;
+
+    B_CAS_CARD *card = p_decoder->p_sys->arib_card;
+    uint8_t *start = p_section->p_payload_start;
+    if ( card->proc_emm(card, start, p_section->p_payload_end - start) < 0 )
+        goto out;
+
+out:
+    dvbpsi_DeletePSISections(p_section);
+}
+
+static int AttachECM( demux_t *p_demux, ts_pid_t *pmtpid, int i_pid )
+{
+    demux_sys_t *p_sys;
+    B_CAS_INIT_STATUS status;
+    MULTI2 *descrambler;
+    ts_decoder_t *p_decoder;
+    ts_pid_t *ecmpid;
+
+    if ( i_pid < 0 )
+        return 0;
+
+    p_sys = p_demux->p_sys;
+    ecmpid = GetPID(p_sys, i_pid);
+    if (ecmpid->type != TYPE_FREE)
+    {
+        if (ecmpid->type != TYPE_ECM)
+            return 0;
+        goto valid;
+    }
+
+    if ( !p_sys->arib_card )
+        return 0;
+
+    if( p_sys->arib_card->get_init_status( p_sys->arib_card, &status ) < 0 )
+        return 0;
+
+    descrambler = create_multi2();
+    if( !descrambler )
+        return 0;
+
+    descrambler->set_system_key(descrambler, status.system_key);
+    descrambler->set_init_cbc(descrambler, status.init_cbc);
+    descrambler->set_round(descrambler, 4);
+
+    p_decoder = (ts_decoder_t *) dvbpsi_decoder_new( ECMCallBack, 1024, true,
+                                                     sizeof(ts_decoder_t) );
+    if( !p_decoder )
+    {
+        descrambler->release(descrambler);
+        return 0;
+    }
+    p_decoder->p_sys = p_sys;
+    p_decoder->p_pid = ecmpid;
+
+    if( !PIDSetup( p_demux, TYPE_ECM, ecmpid, pmtpid ) ) {
+        dvbpsi_decoder_delete( &p_decoder->dvbpsi_decoder );
+        descrambler->release( descrambler );
+        return 0;
+    }
+
+    ecmpid->u.p_ecm->handle->p_decoder = &p_decoder->dvbpsi_decoder;
+    ecmpid->u.p_ecm->arib_descrambler = descrambler;
+
+valid:
+    pmtpid->u.p_pmt->p_ecm = ecmpid;
+
+    if( ProgramIsSelected( p_demux->p_sys, pmtpid->u.p_pmt->i_number ) )
+        SetPIDFilter( p_demux->p_sys, ecmpid, true );
+
+    return 1;
+}
+
+static void DetachECM( demux_t *p_demux, ts_pid_t *pmtpid )
+{
+    ts_pid_t *ecmpid;
+
+    ecmpid = pmtpid->u.p_pmt->p_ecm;
+    if ( !ecmpid )
+        return;
+
+    pmtpid->u.p_pmt->p_ecm = NULL;
+
+    if( ProgramIsSelected( p_demux->p_sys, pmtpid->u.p_pmt->i_number ) )
+        SetPIDFilter( p_demux->p_sys, ecmpid, false );
+
+    PIDRelease( p_demux, ecmpid );
+}
+
+static void ECMCallBack( dvbpsi_t *handle, dvbpsi_psi_section_t *p_section )
+{
+    if( !p_section->b_syntax_indicator )
+        goto out;
+
+    ts_decoder_t *p_decoder = (ts_decoder_t *)handle->p_decoder;
+    ts_pid_t *ecmpid = p_decoder->p_pid;
+    if ( ecmpid->type != TYPE_ECM )
+        goto out;
+
+    if ( !p_section->b_current_next )
+        goto out;
+
+    if( ecmpid->u.p_ecm->i_version != -1 &&
+        ( !p_section->b_current_next ||
+          p_section->i_version == ecmpid->u.p_ecm->i_version ) )
+        goto out;
+
+    ecmpid->u.p_ecm->i_version = p_section->i_version;
+
+    B_CAS_CARD *card = p_decoder->p_sys->arib_card;
+    B_CAS_ECM_RESULT result;
+    uint8_t *start = p_section->p_payload_start;
+    if ( card->
+         proc_ecm(card, &result, start, p_section->p_payload_end - start) < 0 )
+        goto out;
+
+    if ( result.return_code != 0x0800 && result.return_code != 0x0400 &&
+         result.return_code != 0x0200 )
+        goto out;
+
+    MULTI2 *descrambler = ecmpid->u.p_ecm->arib_descrambler;
+    if ( !descrambler )
+        goto out;
+
+    descrambler->set_scramble_key(descrambler, result.scramble_key);
+
+out:
+    dvbpsi_DeletePSISections(p_section);
+}
+#endif
+
 bool ts_psi_PAT_Attach( ts_pid_t *patpid, void *cbdata )
 {
     if( unlikely(patpid->type != TYPE_PAT || patpid->i_pid != TS_PSI_PAT_PID) )
@@ -2168,10 +2463,27 @@ bool ts_psi_PAT_Attach( ts_pid_t *patpid, void *cbdata )
     return dvbpsi_pat_attach( patpid->u.p_pat->handle, PATCallBack, cbdata );
 }
 
+#ifdef HAVE_ARIB
+bool ts_psi_CAT_Attach( ts_pid_t *catpid, void *cbdata )
+{
+    if( unlikely(catpid->type != TYPE_CAT || catpid->i_pid != TS_PSI_CAT_PID) )
+        return false;
+    return dvbpsi_cat_attach( catpid->u.p_cat->handle, CATCallBack, cbdata );
+}
+#endif
+
 void ts_psi_Packet_Push( ts_pid_t *p_pid, const uint8_t *p_pktbuffer )
 {
     if( p_pid->type == TYPE_PAT )
         dvbpsi_packet_push( p_pid->u.p_pat->handle, (uint8_t *) p_pktbuffer );
     else if( p_pid->type == TYPE_PMT )
         dvbpsi_packet_push( p_pid->u.p_pmt->handle, (uint8_t *) p_pktbuffer );
+#ifdef HAVE_ARIB
+    else if( p_pid->type == TYPE_CAT )
+        dvbpsi_packet_push( p_pid->u.p_cat->handle, (uint8_t *) p_pktbuffer );
+    else if( p_pid->type == TYPE_EMM )
+        dvbpsi_packet_push( p_pid->u.p_emm->handle, (uint8_t *) p_pktbuffer );
+    else if( p_pid->type == TYPE_ECM )
+        dvbpsi_packet_push( p_pid->u.p_ecm->handle, (uint8_t *) p_pktbuffer );
+#endif
 }

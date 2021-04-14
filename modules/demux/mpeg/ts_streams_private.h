@@ -27,6 +27,10 @@ typedef struct ts_sections_processor_t ts_sections_processor_t;
 #include <vlc_common.h>
 #include <vlc_es.h>
 
+#ifdef HAVE_ARIB
+# include "../arib/multi2.h"
+#endif
+
 struct ts_pat_t
 {
     int             i_version;
@@ -34,7 +38,6 @@ struct ts_pat_t
     bool            b_generated;
     dvbpsi_t       *handle;
     DECL_ARRAY(ts_pid_t *) programs;
-
 };
 
 struct ts_pmt_t
@@ -81,6 +84,10 @@ struct ts_pmt_t
         int i_logo_id;
         int i_download_id;
     } arib;
+
+#ifdef HAVE_ARIB
+    ts_pid_t        *p_ecm;
+#endif
 };
 
 struct ts_es_t
@@ -166,5 +173,27 @@ struct ts_psip_t
     DECL_ARRAY(ts_pid_t *) eit;
 
 };
+
+#ifdef HAVE_ARIB
+struct ts_cat_t
+{
+    dvbpsi_t       *handle;
+    int             i_version;
+    ts_pid_t       *p_emm;
+};
+
+struct ts_emm_t
+{
+    dvbpsi_t       *handle;
+    int             i_version;
+};
+
+struct ts_ecm_t
+{
+    dvbpsi_t       *handle;
+    int             i_version;
+    MULTI2         *arib_descrambler;
+};
+#endif
 
 #endif
